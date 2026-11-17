@@ -1,4 +1,16 @@
 __pycache__/
 *.pyc
-jev-seo-reports/
+
+# local environments
+.venv/
+venv/
+
+# secrets — never commit credentials
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# local audit / analysis output
+jev-seo-reports/
