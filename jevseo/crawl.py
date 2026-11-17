@@ -24,8 +24,22 @@ from urllib.parse import urljoin, urlparse
 import requests
 from lxml import etree
 
-from jevseo import USER_AGENT
+from jevseo import USER_AGENT as DEFAULT_USER_AGENT
+from jevseo.env import secret
 from jevseo.parse import host_key, normalize_url, parse_page
+
+
+def http_proxy() -> str | None:
+    """Optional outbound proxy for IP-restricted sites (e.g. http://127.0.0.1:8900)."""
+    return secret("JEVSEO_HTTP_PROXY") or secret("HTTPS_PROXY") or secret("HTTP_PROXY")
+
+
+def user_agent() -> str:
+    """Override when WAFs block the default JevSEO UA."""
+    return secret("JEVSEO_USER_AGENT") or DEFAULT_USER_AGENT
+
+
+USER_AGENT = user_agent()
 
 TIMEOUT = 20
 SKIP_EXT = re.compile(r"\.(jpe?g|png|gif|webp|avif|svg|ico|pdf|zip|gz|mp4|mp3|webm|woff2?|ttf|css|js|xml|json|txt|md|markdown|docx?|xlsx?|pptx?)$", re.I)
@@ -55,6 +69,9 @@ class Fetcher:
     def __init__(self, delay: float = 0.0):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en;q=0.9,*;q=0.5"})
+        proxy = http_proxy()
+        if proxy:
+            self.session.proxies.update({"http": proxy, "https": proxy})
         self.delay = delay
         self.lock = threading.Lock()
         self.last = 0.0
@@ -189,7 +206,11 @@ class Renderer:
                 from playwright.sync_api import sync_playwright
 
                 self._pw = sync_playwright().start()
-                self._browser = self._pw.chromium.launch()
+                launch = {}
+                proxy = http_proxy()
+                if proxy:
+                    launch["proxy"] = {"server": proxy}
+                self._browser = self._pw.chromium.launch(**launch)
                 self.available = True
             page = self._browser.new_page(user_agent=USER_AGENT)
             page.goto(url, wait_until="networkidle", timeout=30000)
@@ -282,6 +303,11 @@ def crawl(start_url: str, max_pages: int = 60, max_depth: int = 5, workers: int 
         raise SystemExit(f"Refusing to crawl {host}: it does not resolve to a public address.")
 
     fetcher = Fetcher()
+    # Proxied / WAF-fronted sites often 429 under the default 6-wide burst.
+    if http_proxy() and workers > 2:
+        workers = 2
+        fetcher.delay = max(fetcher.delay, 0.6)
+        log(f"proxy on: slowing crawl to {workers} workers, {fetcher.delay:.1f}s delay")
     home = fetcher.get(start)
     if home is None:
         raise SystemExit(f"Could not reach {start}.")
@@ -295,26 +321,40 @@ def crawl(start_url: str, max_pages: int = 60, max_depth: int = 5, workers: int 
     if robots["crawl_delay"]:
         fetcher.delay = min(float(robots["crawl_delay"]), 5.0)
         workers = 1
-    sitemap_urls = robots["sitemaps"] or [origin + "/sitemap.xml"]
-    sitemaps = read_sitemaps(fetcher, sitemap_urls)
-    in_sitemap = {u for u in sitemaps["urls"] if host_key(urlparse(u).netloc) == site}
-    log(f"robots.txt {'found' if robots['present'] else 'missing'}; sitemap URLs {sitemaps['total_urls']}")
 
-    # Site-level probes: HTTP to HTTPS, host variant, soft 404, llms.txt
+    def probe_get(url: str, attempts: int = 4):
+        """Host/HTTPS probes run before sitemap fan-out; retry brief 429/empty replies."""
+        r = None
+        for attempt in range(attempts):
+            r = fetcher.get(url)
+            if r is not None and r.status_code != 429:
+                return r
+            time.sleep(1.5 * (attempt + 1))
+        return r
+
+    # Site-level probes first: sitemap fetches are noisy and often trip WAFs into 429,
+    # which used to make HTTP→HTTPS look missing and falsely cap the overall score at 60.
+    log("site probes: HTTP→HTTPS, host variant, soft 404, llms.txt")
     probes = {}
     http_home = "http://" + urlparse(final_home).netloc + "/"
-    r = fetcher.get(http_home)
+    r = probe_get(http_home)
     probes["http_to_https"] = bool(r is not None and r.url.startswith("https://"))
     probes["http_redirect_status"] = r.history[0].status_code if r is not None and r.history else None
     alt = urlparse(final_home).netloc
     alt = alt[4:] if alt.startswith("www.") else "www." + alt
-    r = fetcher.get(f"{urlparse(final_home).scheme}://{alt}/")
+    r = probe_get(f"{urlparse(final_home).scheme}://{alt}/")
     probes["host_variant"] = {"host": alt, "status": r.status_code if r is not None else None, "redirect_status": r.history[0].status_code if r is not None and r.history else None, "redirects_to_canonical_host": bool(r is not None and host_key(urlparse(r.url).netloc) == site and urlparse(r.url).netloc == urlparse(final_home).netloc)}
     junk = "".join(random.choices(string.ascii_lowercase, k=14))
-    r = fetcher.get(f"{origin}/jevseo-{junk}-not-found")
+    r = probe_get(f"{origin}/jevseo-{junk}-not-found")
     probes["not_found_status"] = r.status_code if r is not None else None
-    r = fetcher.get(origin + "/llms.txt")
+    r = probe_get(origin + "/llms.txt")
     probes["llms_txt"] = bool(r is not None and r.status_code == 200 and "html" not in r.headers.get("content-type", "") and len(r.text.strip()) > 20)
+    log(f"probes: http→https={probes['http_to_https']} (redirect {probes['http_redirect_status']}); www canonical={probes['host_variant']['redirects_to_canonical_host']}")
+
+    sitemap_urls = robots["sitemaps"] or [origin + "/sitemap.xml"]
+    sitemaps = read_sitemaps(fetcher, sitemap_urls)
+    in_sitemap = {u for u in sitemaps["urls"] if host_key(urlparse(u).netloc) == site}
+    log(f"robots.txt {'found' if robots['present'] else 'missing'}; sitemap URLs {sitemaps['total_urls']}")
 
     renderer = Renderer() if render_mode != "never" else None
     pages: dict[str, dict] = {}
