@@ -1,0 +1,11 @@
+---
+description: 本仓库的提交一律推送到 lear7/jev-seo，不要推上游
+alwaysApply: true
+---
+
+# 推送到个人仓库
+
+- 推送目标只有 `origin`：`https://github.com/lear7/jev-seo.git`（分支 `main`）。
+- `upstream`（`AgriciDaniel/jev-seo`）只用来对照，禁止 `git push` 到 upstream。
+- 用户要求提交、同步或说「推送 / 更新」时：按中文约定式提交后，立刻 `git push` 到 `origin`，不要再问要不要推。
+- 不要提交密钥和分析结果。保持忽略：`.env`、`.env.*`（保留 `.env.example`）、`.venv/`、`*.pem`、`*.key`、`jev-seo-reports/`。
