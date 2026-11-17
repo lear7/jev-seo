@@ -1,10 +1,11 @@
 """Jev judgments: narrow semantic questions over crawled evidence.
 
-POST https://api.typesafe.ai/v1/systemone with state, model and questions
-(docs.typesafe.ai/primitives). Independent questions over one state share a
-request. Code never asks Jev something it can see itself: a page without a
-meta description gets no meta-quality question. Answers are typed and keep
-their probabilities; code turns them into findings only in the decisive band.
+POST …/v1/systemone with state, model and questions (TypeSafe official or
+OpenRouter; docs.typesafe.ai/primitives, openrouter.ai/docs/guides/community/jev).
+Independent questions over one state share a request. Code never asks Jev
+something it can see itself: a page without a meta description gets no
+meta-quality question. Answers are typed and keep their probabilities; code
+turns them into findings only in the decisive band.
 """
 from __future__ import annotations
 
@@ -18,13 +19,52 @@ import requests
 
 from jevseo.env import secret
 
-API = "https://api.typesafe.ai/v1/systemone"
+TYPESAFE_API = "https://api.typesafe.ai/v1/systemone"
+OPENROUTER_API = "https://openrouter.ai/api/v1/systemone"
+TYPESAFE_MODEL = "jev-latest"
+OPENROUTER_MODEL = "typesafe/jev-1.14"
+# Back-compat aliases used by older call sites / docs snippets.
+API = TYPESAFE_API
 MODELS_API = "https://api.typesafe.ai/v1/models"
-MODEL = "jev-latest"
-USD_PER_MTOK = 0.042  # docs.typesafe.ai/models, retrieved 2026-09-20; re-check with the Jev brain staleness rule
+MODEL = TYPESAFE_MODEL
+USD_PER_MTOK = 0.042  # docs.typesafe.ai/models; OpenRouter lists the same rate
 PAGE_TEXT_CHARS = 6000
 ACT = 0.80  # Choice and Score confidence at or above this is decisive
 YES, NO = 0.80, 0.20  # Noul decisive bands (Noul has no confidence field)
+
+
+def resolve_backend() -> dict:
+    """Pick TypeSafe or OpenRouter from env. Prefer OpenRouter when its key is set.
+
+    Env:
+      OPENROUTER_API_KEY / TYPESAFE_API_KEY — credentials (either enables Jev)
+      JEVSEO_JEV_PROVIDER — force `openrouter` or `typesafe`
+      JEVSEO_JEV_MODEL / JEVSEO_JEV_BASE_URL — optional overrides
+    """
+    provider = (secret("JEVSEO_JEV_PROVIDER") or "").strip().lower()
+    or_key = secret("OPENROUTER_API_KEY")
+    ts_key = secret("TYPESAFE_API_KEY")
+    if provider not in ("", "openrouter", "typesafe"):
+        provider = ""
+    if provider == "typesafe":
+        use_or = False
+    elif provider == "openrouter":
+        use_or = True
+    else:
+        use_or = bool(or_key)  # OpenRouter first when both keys exist
+    if use_or:
+        return {
+            "provider": "openrouter",
+            "key": or_key,
+            "api": secret("JEVSEO_JEV_BASE_URL") or OPENROUTER_API,
+            "model": secret("JEVSEO_JEV_MODEL") or OPENROUTER_MODEL,
+        }
+    return {
+        "provider": "typesafe",
+        "key": ts_key,
+        "api": secret("JEVSEO_JEV_BASE_URL") or TYPESAFE_API,
+        "model": secret("JEVSEO_JEV_MODEL") or TYPESAFE_MODEL,
+    }
 
 
 def choice(instructions: str, options: dict) -> dict:
@@ -329,11 +369,26 @@ def keyword_batches(keywords: list[dict], pages: list[dict], site_ctx: dict, siz
 # ---------------------------------------------------------------- client
 class Jev:
     def __init__(self, budget_usd: float = 0.25, log=print):
-        self.key = secret("TYPESAFE_API_KEY")
+        backend = resolve_backend()
+        self.provider = backend["provider"]
+        self.key = backend["key"]
+        self.api = backend["api"]
+        self.model = backend["model"]
         self.budget = budget_usd
         self.log = log
         self.lock = threading.Lock()
-        self.ledger = {"model_requested": MODEL, "model_returned": None, "requests": 0, "failed": 0, "input_tokens": 0, "output_tokens": 0, "est_reserved_tokens": 0, "skipped_budget": 0, "errors": []}
+        self.ledger = {
+            "provider": self.provider,
+            "model_requested": self.model,
+            "model_returned": None,
+            "requests": 0,
+            "failed": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "est_reserved_tokens": 0,
+            "skipped_budget": 0,
+            "errors": [],
+        }
 
     @property
     def available(self) -> bool:
@@ -342,8 +397,20 @@ class Jev:
     def cost(self) -> float:
         return round(self.ledger["input_tokens"] / 1e6 * USD_PER_MTOK, 6)
 
+    def _headers(self) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}
+        if self.provider == "openrouter":
+            # Optional OpenRouter ranking headers; safe defaults for this tool.
+            headers.setdefault("HTTP-Referer", secret("OPENROUTER_HTTP_REFERER") or "https://github.com/AgriciDaniel/jev-seo")
+            headers.setdefault("X-Title", secret("OPENROUTER_APP_TITLE") or "jev-seo")
+        return headers
+
+    def _proxies(self) -> dict[str, str] | None:
+        proxy = secret("JEVSEO_HTTP_PROXY") or secret("HTTPS_PROXY") or secret("HTTP_PROXY")
+        return {"http": proxy, "https": proxy} if proxy else None
+
     def ask(self, state: dict, questions: dict) -> dict | None:
-        body = json.dumps({"state": state, "model": MODEL, "questions": questions})
+        body = json.dumps({"state": state, "model": self.model, "questions": questions})
         est = len(body) // 3  # conservative token estimate for the budget reservation
         with self.lock:
             spent = (self.ledger["input_tokens"] + self.ledger["est_reserved_tokens"]) / 1e6 * USD_PER_MTOK
@@ -354,7 +421,7 @@ class Jev:
         try:
             for attempt in range(5):
                 try:
-                    r = requests.post(API, data=body, headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}, timeout=90)
+                    r = requests.post(self.api, data=body, headers=self._headers(), proxies=self._proxies(), timeout=90)
                 except requests.RequestException as err:
                     if attempt < 4:
                         time.sleep(2**attempt)
@@ -431,8 +498,9 @@ def judge(crawl: dict, pages: list[dict], budget_usd: float, log=print, dfs: dic
     jev = Jev(budget_usd, log)
     out = {"available": jev.available, "site": None, "pages": {}, "pairs": [], "ledger": jev.ledger, "questions": {}}
     if not jev.available:
-        log("TYPESAFE_API_KEY not found: Jev judgments skipped; semantic sections will be marked not assessed.")
+        log("No OPENROUTER_API_KEY or TYPESAFE_API_KEY: Jev judgments skipped; semantic sections will be marked not assessed.")
         return out
+    log(f"Jev via {jev.provider} ({jev.model})")
     home = next((p for p in pages if p["url"] == crawl["final_url"]), pages[0] if pages else None)
     if home is None:
         return out

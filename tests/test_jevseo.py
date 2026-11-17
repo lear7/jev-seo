@@ -169,6 +169,38 @@ class JevValidationTests(unittest.TestCase):
         self.assertEqual(client.ledger["skipped_budget"], 1)
         self.assertEqual(client.ledger["requests"], 0)
 
+    def test_resolve_backend_prefers_openrouter(self):
+        from unittest import mock
+
+        def fake_secret(name):
+            return {
+                "OPENROUTER_API_KEY": "sk-or-test",
+                "TYPESAFE_API_KEY": "apikey_test",
+            }.get(name)
+
+        with mock.patch("jevseo.jev.secret", side_effect=fake_secret):
+            b = jev.resolve_backend()
+        self.assertEqual(b["provider"], "openrouter")
+        self.assertEqual(b["key"], "sk-or-test")
+        self.assertEqual(b["model"], jev.OPENROUTER_MODEL)
+        self.assertTrue(b["api"].startswith("https://openrouter.ai/"))
+
+    def test_resolve_backend_force_typesafe(self):
+        from unittest import mock
+
+        def fake_secret(name):
+            return {
+                "OPENROUTER_API_KEY": "sk-or-test",
+                "TYPESAFE_API_KEY": "apikey_test",
+                "JEVSEO_JEV_PROVIDER": "typesafe",
+            }.get(name)
+
+        with mock.patch("jevseo.jev.secret", side_effect=fake_secret):
+            b = jev.resolve_backend()
+        self.assertEqual(b["provider"], "typesafe")
+        self.assertEqual(b["key"], "apikey_test")
+        self.assertEqual(b["model"], jev.TYPESAFE_MODEL)
+
     def test_pair_shortlist(self):
         a = {"url": "a", "title": "Emergency plumber Leeds", "h1": ["Emergency plumber"], "text_hash": "1"}
         b = {"url": "b", "title": "Emergency plumber Leeds night", "h1": [], "text_hash": "2"}

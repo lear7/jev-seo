@@ -24,7 +24,7 @@ def font_css() -> str:
 def context(vm: dict) -> dict:
     d = vm["d"]
     return vm | {
-        "css": font_css() + (TEMPLATES / "report.css").read_text(),
+        "css": font_css() + (TEMPLATES / "report.css").read_text(encoding="utf-8"),
         "date": datetime.fromisoformat(d["run"]["finished_at"]).strftime("%d %B %Y"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "rule_count": len(RULES),
@@ -45,6 +45,6 @@ def write_pdf(vm: dict, path: Path) -> Path:
     from weasyprint import HTML
 
     html = render_html(vm)
-    path.with_suffix(".html").write_text(html)
+    path.with_suffix(".html").write_text(html, encoding="utf-8")
     HTML(string=html, base_url=str(path.parent)).write_pdf(path)
     return path

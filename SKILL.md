@@ -32,9 +32,10 @@ skill's base directory, for example `"<skill-dir>/bin/jevseo" doctor`.
    given, ask for it (one question). Accept a bare domain. Only public
    sites: the crawler refuses private and local addresses by design.
 2. **Preflight.** Run `bin/jevseo doctor`. It reports dependencies and
-   whether `TYPESAFE_API_KEY` and `PAGESPEED_API_KEY` exist (never their
-   values). Without the TypeSafe key, the audit still runs and marks the
-   Jev sections as not assessed and the score as a partial audit; say so.
+   whether `OPENROUTER_API_KEY` / `TYPESAFE_API_KEY` and `PAGESPEED_API_KEY`
+   exist (never their values). OpenRouter is preferred when its key is set.
+   Without a Jev key, the audit still runs and marks the Jev sections as not
+   assessed and the score as a partial audit; say so.
    Keys are read from the environment, then `$JEVSEO_ENV_FILE`, `./.env`,
    the repository's `.env` (template: `.env.example`), then
    `~/Desktop/Keys/.env`.

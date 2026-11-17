@@ -334,7 +334,7 @@ def view_model(d: dict, folder: Path) -> dict:
 
 
 def build(folder: Path, formats: list[str], log=print) -> dict:
-    data = json.loads((folder / "audit.json").read_text())
+    data = json.loads((folder / "audit.json").read_text(encoding="utf-8"))
     log("building charts")
     vm = view_model(data, folder)
     written = {}

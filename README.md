@@ -67,7 +67,7 @@ git clone https://github.com/AgriciDaniel/jev-seo.git
 cd jev-seo
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env                           # add TYPESAFE_API_KEY (optional keys are listed inside)
+cp .env.example .env                           # add OPENROUTER_API_KEY or TYPESAFE_API_KEY (optional keys inside)
 bin/jevseo doctor                              # dependencies and keys, never prints values
 bin/jevseo run https://example.com             # audit and render with an automatic summary
 ```
@@ -102,7 +102,7 @@ bin/jevseo rescore jev-seo-reports/<dir>                        # rebuild findin
 | Page, site and keyword judgments | TypeSafe Jev API | 0.042 USD per million input tokens; about 0.00015 USD per page |
 | Rankings, keywords, competitors, backlinks, live SERPs, AI mentions (`--full`) | DataForSEO API | Reported per call; about 0.30 USD per site |
 
-Both paid APIs sit behind hard caps (`--jev-budget`, default 0.25 USD; `--dfs-budget`, default 1.00 USD) checked before every request, and every call is in the report's cost ledger. Keys come from the environment or a `.env` file (see [.env.example](.env.example)): `TYPESAFE_API_KEY`, optionally `PAGESPEED_API_KEY` (without it PageSpeed is often rate limited), and for `--full` `DATAFORSEO_USERNAME` and `DATAFORSEO_PASSWORD`. Without the TypeSafe key the audit still runs, marks the Jev sections as not assessed, and labels the score a partial audit.
+Both paid APIs sit behind hard caps (`--jev-budget`, default 0.25 USD; `--dfs-budget`, default 1.00 USD) checked before every request, and every call is in the report's cost ledger. Keys come from the environment or a `.env` file (see [.env.example](.env.example)): `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` for Jev (OpenRouter is preferred when set; same ~$0.042/Mtok pricing), optionally `PAGESPEED_API_KEY` (without it PageSpeed is often rate limited), and for `--full` `DATAFORSEO_USERNAME` and `DATAFORSEO_PASSWORD`. Without a Jev key the audit still runs, marks the Jev sections as not assessed, and labels the score a partial audit.
 
 ## How far to trust it
 

@@ -116,8 +116,8 @@ def audit(args) -> Path:
         "scores": scores,
         "actions": acts,
     }
-    (out / "audit.json").write_text(json.dumps(data, indent=1, default=str))
-    (out / "digest.md").write_text(digest(data))
+    (out / "audit.json").write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
+    (out / "digest.md").write_text(digest(data), encoding="utf-8")
     log(f"audit written: {out / 'audit.json'}")
     log(f"score {scores['overall']} ({scores['grade']}{', partial' if scores.get('partial') else ''}), {len(acts)} actions, Jev ${judged.get('ledger', {}).get('cost_usd', 0):.4f}" + (f", DataForSEO ${dfs['ledger']['cost_usd']:.4f}" if dfs else ""))
     return out
@@ -232,8 +232,8 @@ def rescore(args) -> None:
     d["scores"] = score.score(site, findings, d["jev"], d.get("performance"), d.get("dataforseo"))
     d["actions"] = score.actions(findings, d["jev"], len(checks.html_pages(site)))
     d["run"]["rescored_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    (folder / "audit.json").write_text(json.dumps(d, indent=1, default=str))
-    (folder / "digest.md").write_text(digest(d))
+    (folder / "audit.json").write_text(json.dumps(d, indent=1, default=str), encoding="utf-8")
+    (folder / "digest.md").write_text(digest(d), encoding="utf-8")
     log(f"rescored: {d['scores']['overall']} ({d['scores']['grade']}), {len(d['actions'])} actions. Action IDs may have changed; re-check narrative.json.")
 
 
@@ -260,7 +260,17 @@ def doctor(_args) -> None:
             report[mod] = "ok"
         except ImportError as err:
             report[mod] = f"missing ({err.name})"
-    report["TYPESAFE_API_KEY"] = "present" if secret("TYPESAFE_API_KEY") else "missing: Jev judgments will be skipped"
+    from jevseo import jev as jev_mod
+
+    backend = jev_mod.resolve_backend()
+    has_jev = bool(backend["key"])
+    report["OPENROUTER_API_KEY"] = "present" if secret("OPENROUTER_API_KEY") else "missing"
+    report["TYPESAFE_API_KEY"] = "present" if secret("TYPESAFE_API_KEY") else "missing"
+    report["Jev"] = (
+        f"ok via {backend['provider']} ({backend['model']})"
+        if has_jev
+        else "missing: set OPENROUTER_API_KEY or TYPESAFE_API_KEY; judgments will be skipped"
+    )
     report["PAGESPEED_API_KEY"] = "present" if secret("PAGESPEED_API_KEY") else "missing: PageSpeed runs unkeyed and may be rate limited"
     report["DATAFORSEO"] = "present (needed only for --full)" if secret("DATAFORSEO_USERNAME") and secret("DATAFORSEO_PASSWORD") else "missing: --full mode unavailable"
     print(json.dumps(report, indent=1))
